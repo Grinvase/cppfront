@@ -133,6 +133,14 @@ static cmdline_processor::register_flag cmd_verbose(
     []{ flag_verbose = true; }
 );
 
+static auto flag_split_header_file = false;
+static cmdline_processor::register_flag cmd_split_header_file(
+    9,
+    "split-header-file",
+    "Split .cpp2 to .h and .cpp",
+    []{ flag_split_header_file = true; }
+);
+
 static auto flag_no_exceptions = false;
 static cmdline_processor::register_flag cmd_no_exceptions(
     4,
@@ -633,6 +641,17 @@ public:
         assert(cpp1_filename.ends_with(".h"));
         out_file.close();
         out_file.open(cpp1_filename + "pp");
+    }
+
+    auto reopen(std::string new_filename)
+        -> void
+    {
+        assert(
+            is_open()
+            && "ICE: tried to call .reopen without first calling .open"
+        );
+        out_file.close();
+        out_file.open(new_filename);
     }
 
     auto is_open()
@@ -1202,13 +1221,15 @@ public:
 
         //  Now we'll open the Cpp1 file
         auto cpp1_filename = sourcefile.substr(0, std::ssize(sourcefile) - 1);
+        auto h1_filename = cpp1_filename.substr(0, std::ssize(sourcefile) - 5) + ".h";
         if (!flag_cpp1_filename.empty()) {
             cpp1_filename = flag_cpp1_filename; // use override if present
         }
+        auto out_filename = flag_split_header_file ? h1_filename : cpp1_filename;
 
         printer.open(
             sourcefile,
-            cpp1_filename,
+            out_filename,
             tokens.get_comments(),
             source,
             parser
@@ -1216,7 +1237,7 @@ public:
         if (!printer.is_open()) {
             errors.emplace_back(
                 source_position{},
-                "could not open output file " + cpp1_filename
+                "could not open output file " + out_filename
             );
             return {};
         }
@@ -1233,7 +1254,7 @@ public:
         if (source.has_cpp2())
         {
             printer.print_extra( "\n" );
-            if (cpp1_filename.back() == 'h') {
+            if (cpp1_filename.back() == 'h' || flag_split_header_file) {
                 printer.print_extra( "#ifndef " + cpp1_FILENAME+"_CPP2\n");
                 printer.print_extra( "#define " + cpp1_FILENAME+"_CPP2" + "\n\n" );
             }
@@ -1438,6 +1459,12 @@ public:
         //
         printer.finalize_phase();
         printer.next_phase();
+
+        if (flag_split_header_file) {
+            printer.print_extra( "\n#endif\n" );
+            printer.reopen(cpp1_filename);
+            printer.print_extra( "\n#include \"" + h1_filename + "\"\n\n" );
+        }
 
         if (!flag_clean_cpp1) {
             printer.print_extra( "\n//=== Cpp2 function definitions =================================================\n\n" );
